@@ -60,7 +60,8 @@ async function fetchForecast(lat, lon) {
     try {
         const response = await fetch(`${VERCEL_API_URL}?type=forecast&lat=${lat}&lon=${lon}`);
         const data = await response.json();
-        renderForecast(data.list);
+        if (data && data.list) renderForecast(data.list);
+
     } catch (error) {
         console.error("Forecast error:", error);
     }
