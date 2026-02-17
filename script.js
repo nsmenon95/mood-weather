@@ -133,26 +133,15 @@ async function fetchWeatherByCoords(lat, lon) {
 }
 
 async function fetchWeather(city) {
-    if (API_KEY === 'YOUR_KEY_HERE') {
-        alert('Please replace "YOUR_KEY_HERE" in script.js with your valid OpenWeatherMap API key!');
-        return; // Stop execution without a key
-    }
-
     try {
         loader.classList.remove('hidden');
-        const response = await fetch(`${BASE_URL}?q=${city}&appid=${API_KEY}&units=metric`);
-
-        if (!response.ok) {
-            throw new Error('City not found');
-        }
-
+        // We call OUR server, not OpenWeather!
+        const response = await fetch(`/api/weather?city=${city}`);
         const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'City not found');
         updateUI(data);
     } catch (error) {
-        console.error(error);
         alert(error.message);
-        // Optional: Reset to default state on error
-        updateMood('Default');
     } finally {
         loader.classList.add('hidden');
     }
@@ -183,16 +172,12 @@ function updateUI(data) {
 // ... existing code ...
 
 async function fetchForecast(lat, lon) {
-    if (API_KEY === 'YOUR_KEY_HERE') return;
-
     try {
-        const response = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=metric`);
-        if (!response.ok) throw new Error('Forecast data not found');
-
+        const response = await fetch(`/api/weather?type=forecast&lat=${lat}&lon=${lon}`);
         const data = await response.json();
         renderForecast(data.list);
     } catch (error) {
-        console.error("Error fetching forecast:", error);
+        console.error("Forecast error:", error);
     }
 }
 
