@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mood Weather</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+</head>
+
+<body
+    class="min-h-screen flex items-center justify-center transition-colors duration-1000 ease-in-out bg-gradient-to-br from-blue-400 to-indigo-600 p-4">
+
+    <!-- Glassmorphism Card -->
+    <div
+        class="bg-white/20 backdrop-blur-lg border border-white/30 rounded-3xl p-8 w-full max-w-md shadow-2xl text-white relative overflow-hidden transition-all duration-500 hover:shadow-3xl transform hover:scale-[1.02]">
+
+        <!-- Search Bar -->
+        <div class="relative mb-8 group">
+            <input type="text" id="city-input" placeholder="Search city..."
+                class="w-full bg-white/20 border-none outline-none text-white placeholder-white/70 px-6 py-3 rounded-full backdrop-blur-md shadow-inner focus:ring-2 focus:ring-white/50 transition-all text-lg tracking-wide">
+            <button id="locate-btn"
+                class="absolute right-12 top-1/2 -translate-y-1/2 text-white/80 hover:text-white transition-colors p-2 rounded-full hover:bg-white/10"
+                title="Use my location">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </button>
+            <button id="search-btn"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-white/80 hover:text-white transition-colors p-2 rounded-full hover:bg-white/10">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+            </button>
+            <!-- Suggestions Dropdown -->
+            <ul id="suggestions"
+                class="absolute top-full left-0 right-0 mt-2 bg-white/20 backdrop-blur-md border border-white/30 rounded-xl overflow-hidden shadow-lg hidden z-10 text-left">
+            </ul>
+        </div>
+
+        <!-- Weather Info -->
+        <div class="text-center space-y-4">
+            <div id="weather-icon-container" class="animate-bounce-slow">
+                <img id="weather-icon" src="https://openweathermap.org/img/wn/02d@4x.png" alt="Weather Icon"
+                    class="w-32 h-32 mx-auto drop-shadow-lg filter">
+            </div>
+
+            <h1 id="temp" class="text-7xl font-bold tracking-tighter drop-shadow-md">--°</h1>
+            <h2 id="city-name" class="text-2xl font-medium tracking-wide opacity-90">City Name</h2>
+
+            <div class="h-px bg-white/30 w-1/2 mx-auto my-6"></div>
+
+            <!-- Mood Message -->
+            <div id="mood-container"
+                class="bg-white/10 rounded-xl p-4 backdrop-blur-sm border border-white/10 shadow-lg mt-6 transform transition-all duration-300 hover:bg-white/20">
+                <p id="mood-message" class="text-lg font-semibold italic tracking-wide">"Your mood awaits..."</p>
+            </div>
+
+            <!-- 5-Day Forecast -->
+            <div id="forecast-container" class="mt-8 grid grid-cols-5 gap-2 w-full">
+                <!-- Forecast items will be injected here -->
+            </div>
+        </div>
+
+        <!-- Loader (Hidden by default) -->
+        <div id="loader"
+            class="absolute inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center rounded-3xl hidden">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
