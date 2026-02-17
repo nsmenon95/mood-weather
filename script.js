@@ -1,4 +1,4 @@
-const API_KEY = '0fe15aaebd2715e0decb31a513508f7c'; // Replace with a valid key for testing
+const API_KEY = 'Replaced_by_env_variable'; // Replace with a valid key for testing
 const BASE_URL = 'https://api.openweathermap.org/data/2.5/weather';
 
 const cityInput = document.getElementById('city-input');
