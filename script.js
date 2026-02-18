@@ -23,8 +23,8 @@ const el = {
 
 /* ============================================================
    USER LOCATION CACHE
-   Stored as soon as we have coords (page load or locate button)
-   Used to sort autocomplete suggestions by proximity
+   Stored as soon as we have coords (page load or locate button).
+   Used to bias autocomplete suggestions toward nearby places.
    ============================================================ */
 let userCoords = null; // { lat, lon } | null
 
@@ -33,68 +33,126 @@ let userCoords = null; // { lat, lon } | null
    MOOD MAP
    ============================================================ */
 const moodMap = {
-  Clear:        { gradient: 'from-yellow-400 via-orange-500 to-red-500',  message: "Sun's out, shades on! Time for an iced coffee."      },
+  Clear:        { gradient: 'from-yellow-400 via-orange-500 to-red-500',  message: "Sun's out, shades on! Time for an iced coffee."       },
   Clouds:       { gradient: 'from-gray-300 via-gray-400 to-gray-500',     message: "A bit gray today. Perfect for a walk and lo-fi beats." },
   Rain:         { gradient: 'from-blue-700 via-blue-800 to-gray-900',     message: "Perfect weather for a cozy book and tea."             },
-  Snow:         { gradient: 'from-blue-100 via-blue-200 to-white',        message: "Bundle up! It's a winter wonderland."                },
-  Thunderstorm: { gradient: 'from-gray-900 via-purple-900 to-black',      message: "Stay inside and watch the lightning show."           },
-  Drizzle:      { gradient: 'from-blue-300 via-blue-400 to-blue-500',     message: "Light sprinkle. Fresh air day."                     },
-  Mist:         { gradient: 'from-gray-200 via-gray-300 to-gray-400',     message: "Low visibility — travel safe."                      },
-  Haze:         { gradient: 'from-yellow-100 via-gray-300 to-gray-400',   message: "Hazy skies today. Stay hydrated."                   },
-  Default:      { gradient: 'from-blue-400 to-indigo-600',                message: "Search a city to discover its mood."                }
+  Snow:         { gradient: 'from-blue-100 via-blue-200 to-white',        message: "Bundle up! It's a winter wonderland."                 },
+  Thunderstorm: { gradient: 'from-gray-900 via-purple-900 to-black',      message: "Stay inside and watch the lightning show."            },
+  Drizzle:      { gradient: 'from-blue-300 via-blue-400 to-blue-500',     message: "Light sprinkle. Fresh air day."                      },
+  Mist:         { gradient: 'from-gray-200 via-gray-300 to-gray-400',     message: "Low visibility — travel safe."                       },
+  Haze:         { gradient: 'from-yellow-100 via-gray-300 to-gray-400',   message: "Hazy skies today. Stay hydrated."                    },
+  Default:      { gradient: 'from-blue-400 to-indigo-600',                message: "Search a city to discover its mood."                 }
 };
 
 
 /* ============================================================
    AUTOCOMPLETE STATE
    ============================================================ */
-let autocompleteDebounce = null;  // debounce timer handle
+let autocompleteDebounce  = null;  // debounce timer handle
 let selectedFromDropdown  = false; // flag: user clicked a suggestion
 
 
 /* ============================================================
    HAVERSINE DISTANCE
-   Returns distance in kilometres between two lat/lon points.
-   Formula: https://en.wikipedia.org/wiki/Haversine_formula
+   Returns kilometres between two lat/lon points.
    ============================================================ */
 function haversineKm(lat1, lon1, lat2, lon2) {
-  const R    = 6371;                          // Earth radius in km
+  const R    = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-
-  const a =
+  const a    =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-    Math.cos(toRad(lat2)) *
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
     Math.sin(dLon / 2) ** 2;
-
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function toRad(deg) {
-  return deg * (Math.PI / 180);
+function toRad(deg) { return deg * (Math.PI / 180); }
+
+
+/* ============================================================
+   NAME MATCH SCORING
+   Returns a 0–1 score based on how well the query matches
+   the place name.
+
+   Levels (highest → lowest):
+     1.0 — exact match            "india"   → "India"
+     0.8 — starts with query      "che"     → "Chennai"
+     0.5 — word inside name       "an"      → "San Antonio"
+     0.2 — substring anywhere     "ex"      → "Mexico"
+     0.0 — no match
+   ============================================================ */
+function nameMatchScore(query, place) {
+  const q    = query.trim().toLowerCase();
+  const name = place.name.toLowerCase();
+
+  if (name === q)              return 1.0;  // exact
+  if (name.startsWith(q))     return 0.8;  // prefix match
+  // Starts-with match on any word in the name (e.g. "an" → "San Antonio")
+  const words = name.split(/[\s,\-]+/);
+  if (words.some(w => w.startsWith(q))) return 0.5;
+  if (name.includes(q))       return 0.2;  // substring fallback
+  return 0.0;
+}
+
+
+/* ============================================================
+   PROXIMITY SCORING
+   Converts raw km distance to a 0–1 score.
+   Uses a soft decay so very close cities score near 1
+   and very far cities score near 0, but nothing is zero.
+
+   Formula: 1 / (1 + km / SCALE)
+     SCALE = 500 km  → city 500 km away scores ~0.5
+                      → city 50 km away  scores ~0.9
+                      → city 5000 km away scores ~0.09
+   ============================================================ */
+const PROXIMITY_SCALE_KM = 500;
+
+function proximityScore(km) {
+  return 1 / (1 + km / PROXIMITY_SCALE_KM);
+}
+
+
+/* ============================================================
+   HYBRID SORT
+   Combines name relevance + proximity into one final score.
+   Weights:
+     NAME_WEIGHT      = 0.6   (name match is the primary signal)
+     PROXIMITY_WEIGHT = 0.4   (proximity is a tiebreaker / bias)
+
+   When userCoords is null → pure name-match order (API default).
+   ============================================================ */
+const NAME_WEIGHT      = 0.6;
+const PROXIMITY_WEIGHT = 0.4;
+
+function sortSuggestions(query, suggestions) {
+  // No user location → keep API order (already name-ranked)
+  if (!userCoords) return suggestions;
+
+  return suggestions
+    .map(place => {
+      const km      = haversineKm(userCoords.lat, userCoords.lon, place.lat, place.lon);
+      const score   =
+        NAME_WEIGHT      * nameMatchScore(query, place) +
+        PROXIMITY_WEIGHT * proximityScore(km);
+
+      return { ...place, _km: km, _score: score };
+    })
+    .sort((a, b) => b._score - a._score); // highest score first
 }
 
 
 /* ============================================================
    NETWORK HELPERS
    ============================================================ */
-
-/**
- * Centralised fetch:
- * Always reads body as text first to avoid JSON parse crashes.
- * Throws a clean Error with the backend's message.
- */
 async function safeFetch(url) {
   const res  = await fetch(url);
   const text = await res.text();
 
   let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error("Weather service temporarily unavailable");
-  }
+  try { data = JSON.parse(text); }
+  catch { throw new Error("Weather service temporarily unavailable"); }
 
   if (!res.ok) throw new Error(data.message || "Request failed");
   return data;
@@ -104,7 +162,6 @@ async function safeFetch(url) {
 /* ============================================================
    WEATHER API CALLS
    ============================================================ */
-
 async function getWeatherByCity(city) {
   if (!city.trim()) throw new Error("Please enter a city name");
   return safeFetch(`${API_URL}?city=${encodeURIComponent(city)}`);
@@ -118,50 +175,21 @@ async function getForecast(lat, lon) {
   try {
     const data = await safeFetch(`${API_URL}?type=forecast&lat=${lat}&lon=${lon}`);
     return data.list || [];
-  } catch {
-    return []; // forecast failure must never break the UI
-  }
+  } catch { return []; }
 }
 
-/**
- * Geocoding autocomplete — returns raw array from backend
- * [{ name, country, state, lat, lon }, ...]
- */
 async function getCitySuggestions(query) {
   if (!query || query.trim().length < 2) return [];
   try {
     const data = await safeFetch(`${API_URL}?q=${encodeURIComponent(query.trim())}`);
     return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-
-
-/* ============================================================
-   SORT SUGGESTIONS BY PROXIMITY
-   If we have userCoords, attach a `distanceKm` to each result
-   and sort ascending. Falls back to API order if no coords.
-   ============================================================ */
-function sortByProximity(suggestions) {
-  if (!userCoords) return suggestions; // no coords yet → keep API order
-
-  return suggestions
-    .map(place => ({
-      ...place,
-      distanceKm: haversineKm(
-        userCoords.lat, userCoords.lon,
-        place.lat,      place.lon
-      )
-    }))
-    .sort((a, b) => a.distanceKm - b.distanceKm);
+  } catch { return []; }
 }
 
 
 /* ============================================================
    UI HELPERS
    ============================================================ */
-
 function setLoading(state) {
   el.loader.classList.toggle('hidden', !state);
   el.searchBtn.disabled = state;
@@ -184,10 +212,7 @@ function renderCurrent(data) {
 
 function renderForecast(list) {
   el.forecast.innerHTML = '';
-
-  const days = list
-    .filter(i => i.dt_txt.includes("12:00:00"))
-    .slice(0, 5);
+  const days = list.filter(i => i.dt_txt.includes("12:00:00")).slice(0, 5);
 
   days.forEach(day => {
     const dayName = new Date(day.dt * 1000)
@@ -196,17 +221,12 @@ function renderForecast(list) {
     const card = document.createElement('div');
     card.className =
       "flex flex-col items-center bg-white/10 backdrop-blur-sm rounded-lg p-2 border border-white/5 shadow-sm";
-
     card.innerHTML = `
       <span class="text-xs opacity-80">${dayName}</span>
-      <img
-        src="https://openweathermap.org/img/wn/${day.weather[0].icon}.png"
-        alt="${day.weather[0].description}"
-        class="w-8 h-8"
-      >
+      <img src="https://openweathermap.org/img/wn/${day.weather[0].icon}.png"
+           alt="${day.weather[0].description}" class="w-8 h-8">
       <span class="text-sm font-bold">${Math.round(day.main.temp)}°</span>
     `;
-
     el.forecast.appendChild(card);
   });
 }
@@ -215,14 +235,12 @@ function renderForecast(list) {
 /* ============================================================
    AUTOCOMPLETE UI
    ============================================================ */
-
 function getOrCreateDropdown() {
-  let dropdown = document.getElementById('autocomplete-dropdown');
-
-  if (!dropdown) {
-    dropdown = document.createElement('ul');
-    dropdown.id        = 'autocomplete-dropdown';
-    dropdown.className = [
+  let dd = document.getElementById('autocomplete-dropdown');
+  if (!dd) {
+    dd = document.createElement('ul');
+    dd.id        = 'autocomplete-dropdown';
+    dd.className = [
       'absolute', 'z-50', 'w-full', 'mt-1',
       'bg-white', 'text-gray-800',
       'rounded-xl', 'shadow-xl',
@@ -235,112 +253,91 @@ function getOrCreateDropdown() {
     if (getComputedStyle(wrapper).position === 'static') {
       wrapper.style.position = 'relative';
     }
-
-    wrapper.appendChild(dropdown);
+    wrapper.appendChild(dd);
   }
-
-  return dropdown;
+  return dd;
 }
 
 function closeDropdown() {
-  const dropdown = document.getElementById('autocomplete-dropdown');
-  if (dropdown) dropdown.innerHTML = '';
+  const dd = document.getElementById('autocomplete-dropdown');
+  if (dd) dd.innerHTML = '';
 }
 
 /**
- * Renders sorted suggestion list.
- * Shows a small distance badge when userCoords is available.
+ * Build the distance badge shown on each suggestion row.
+ * Only rendered when userCoords is known.
  */
-function renderSuggestions(suggestions) {
-  const dropdown = getOrCreateDropdown();
-  dropdown.innerHTML = '';
+function buildDistanceBadge(km) {
+  if (!userCoords || km === undefined) return '';
+  const formatted = km < 10
+    ? km.toFixed(1)
+    : Math.round(km).toLocaleString();
 
-  if (!suggestions.length) {
-    closeDropdown();
-    return;
-  }
+  return `
+    <span class="ml-2 shrink-0 text-xs font-medium text-blue-500
+                 bg-blue-50 px-2 py-0.5 rounded-full whitespace-nowrap">
+      ${formatted} km
+    </span>`;
+}
 
-  // Sort nearest first if we have user location
-  const sorted = sortByProximity(suggestions);
+/**
+ * Renders the sorted suggestion dropdown.
+ * Passes the current query to sortSuggestions so scoring
+ * knows how well each name matches.
+ */
+function renderSuggestions(query, suggestions) {
+  const dd = getOrCreateDropdown();
+  dd.innerHTML = '';
+
+  if (!suggestions.length) { closeDropdown(); return; }
+
+  // ✅ Hybrid sort: name relevance (60%) + proximity (40%)
+  const sorted = sortSuggestions(query, suggestions);
 
   sorted.forEach(place => {
     const label = [place.name, place.state, place.country]
-      .filter(Boolean)
-      .join(', ');
-
-    // Distance badge — only shown when we have user location
-    const distanceBadge = (userCoords && place.distanceKm !== undefined)
-      ? buildDistanceBadge(place.distanceKm)
-      : '';
+      .filter(Boolean).join(', ');
 
     const li = document.createElement('li');
     li.className = [
       'flex', 'items-center', 'justify-between',
-      'px-4', 'py-2',
-      'cursor-pointer',
-      'hover:bg-blue-50',
-      'text-sm',
+      'px-4', 'py-2', 'cursor-pointer',
+      'hover:bg-blue-50', 'text-sm',
       'transition-colors', 'duration-100',
       'border-b', 'border-gray-50', 'last:border-0'
     ].join(' ');
 
     li.innerHTML = `
       <span class="truncate">${label}</span>
-      ${distanceBadge}
+      ${buildDistanceBadge(place._km)}
     `;
 
-    // mousedown fires before blur → value is read before focus is lost
     li.addEventListener('mousedown', (e) => {
-      e.preventDefault();              // prevent input blur
+      e.preventDefault();
       selectedFromDropdown = true;
       el.cityInput.value   = label;
       closeDropdown();
       searchCity(label);
     });
 
-    dropdown.appendChild(li);
+    dd.appendChild(li);
   });
 }
 
 /**
- * Returns a small styled distance pill string.
- * e.g.  "2.4 km"  or  "1,203 km"
- */
-function buildDistanceBadge(km) {
-  const formatted = km < 10
-    ? km.toFixed(1)                          // "2.4"
-    : Math.round(km).toLocaleString();       // "1,203"
-
-  return `
-    <span class="
-      ml-2 shrink-0
-      text-xs font-medium
-      text-blue-500
-      bg-blue-50
-      px-2 py-0.5
-      rounded-full
-    ">
-      ${formatted} km
-    </span>
-  `;
-}
-
-/**
- * Debounced input handler — waits 300 ms after user stops typing.
+ * Debounced input handler.
+ * Passes query to renderSuggestions so it can score name matches.
  */
 function handleAutocompleteInput() {
   clearTimeout(autocompleteDebounce);
 
   const query = el.cityInput.value.trim();
-
-  if (query.length < 2) {
-    closeDropdown();
-    return;
-  }
+  if (query.length < 2) { closeDropdown(); return; }
 
   autocompleteDebounce = setTimeout(async () => {
     const suggestions = await getCitySuggestions(query);
-    renderSuggestions(suggestions);
+    // ✅ Pass query so name scoring works correctly
+    renderSuggestions(query, suggestions);
   }, 300);
 }
 
@@ -348,18 +345,14 @@ function handleAutocompleteInput() {
 /* ============================================================
    CONTROLLERS
    ============================================================ */
-
 async function searchCity(city) {
   try {
     setLoading(true);
     closeDropdown();
-
     const data     = await getWeatherByCity(city);
     renderCurrent(data);
-
     const forecast = await getForecast(data.coord.lat, data.coord.lon);
     renderForecast(forecast);
-
   } catch (err) {
     alert(err.message);
   } finally {
@@ -370,18 +363,12 @@ async function searchCity(city) {
 async function loadByCoords(lat, lon) {
   try {
     setLoading(true);
-
-    // ✅ Cache coords for proximity sorting
-    userCoords = { lat, lon };
-
+    userCoords = { lat, lon }; // cache early
     const data     = await getWeatherByCoords(lat, lon);
     renderCurrent(data);
-
     el.cityInput.value = `${data.name}, ${data.sys.country}`;
-
     const forecast = await getForecast(data.coord.lat, data.coord.lon);
     renderForecast(forecast);
-
   } catch (err) {
     alert(err.message);
   } finally {
@@ -389,10 +376,6 @@ async function loadByCoords(lat, lon) {
   }
 }
 
-/**
- * Requests geolocation and loads local weather.
- * `silent = true` → no alert on denial (used for auto-load on page start).
- */
 function locateUser(silent = false) {
   if (!navigator.geolocation) {
     if (!silent) alert("Geolocation is not supported by your browser.");
@@ -401,12 +384,9 @@ function locateUser(silent = false) {
 
   navigator.geolocation.getCurrentPosition(
     (pos) => {
-      // Cache coords immediately — before the weather loads —
-      // so autocomplete can use them even if the API call is slow
-      userCoords = {
-        lat: pos.coords.latitude,
-        lon: pos.coords.longitude
-      };
+      // Cache coords immediately — before weather fetch completes —
+      // so autocomplete proximity sorting is ready right away
+      userCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
       loadByCoords(pos.coords.latitude, pos.coords.longitude);
     },
     (err) => {
@@ -421,7 +401,6 @@ function locateUser(silent = false) {
 /* ============================================================
    AUTO-LOAD ON PAGE START
    ============================================================ */
-
 function initAutoLocation() {
   if (!navigator.geolocation) return;
 
@@ -430,10 +409,9 @@ function initAutoLocation() {
       if (result.state === 'granted' || result.state === 'prompt') {
         locateUser(true);
       }
-      // 'denied' → do nothing, let user search manually
     });
   } else {
-    locateUser(true); // Permissions API unavailable → just try
+    locateUser(true);
   }
 }
 
@@ -441,7 +419,6 @@ function initAutoLocation() {
 /* ============================================================
    EVENT LISTENERS
    ============================================================ */
-
 el.searchBtn.addEventListener('click', () => {
   const city = el.cityInput.value.trim();
   if (city) searchCity(city);
@@ -450,10 +427,7 @@ el.searchBtn.addEventListener('click', () => {
 el.cityInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const city = el.cityInput.value.trim();
-    if (city) {
-      closeDropdown();
-      searchCity(city);
-    }
+    if (city) { closeDropdown(); searchCity(city); }
   }
   if (e.key === 'Escape') closeDropdown();
 });
