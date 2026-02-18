@@ -1,6 +1,6 @@
 /* ---------------- CONFIG ---------------- */
 
-const API_URL = "https://mood-weather.vercel.app/api/weather";
+const API_URL = "https://api.openweathermap.org/data/2.5/weather";
 
 
 /* ---------------- DOM ---------------- */
